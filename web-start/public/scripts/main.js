@@ -375,6 +375,7 @@ var settings = {timestampsInSnapshots: true};
 firestore.settings(settings);
 
 // TODO: Enable Firebase Performance Monitoring.
+firebase.performance()
 
 // We load currently existing chat messages and listen to new ones.
 loadMessages();
