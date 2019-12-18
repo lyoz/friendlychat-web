@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+const Vision = require('@google-cloud/vision')
+const vision = new Vision()
+const spawn = require('child-process-promise').spawn
+
+const path = require('path')
+const os = require('os')
+const fs = require('fs')
+
 // TODO(DEVELOPER): Import the Cloud Functions for Firebase and the Firebase Admin modules here.
 const functions = require('firebase-functions')
 const admin = require('firebase-admin')
@@ -33,5 +41,36 @@ exports.addWelcomeMessages = functions.auth.user().onCreate(async user => {
 })
 
 // TODO(DEVELOPER): Write the blurOffensiveImages Function here.
+exports.blurOffensiveImages = functions.runWith({ memory: '2GB' }).storage.object().onFinalize(
+  async object => {
+    const image = { source: { imageUri: `gs://${object.bucket}/${object.name}` } }
+    const batchAnnotateImagesResponse = await vision.safeSearchDetection(image)
+    const safeSearchResult = batchAnnotateImagesResponse[0].safeSearchAnnotation
+    const Likelihood = Vision.types.Likelihood
+    if (Likelihood[safeSearchResult.adult] >= Likelihood.LIKELY
+    || Likelihood[safeSearchResult.violence] >= Likelihood.LIKELY) {
+      console.log('The image', object.name, 'has been detected as inappropriate.')
+      return blurImage(object.name)
+    }
+    console.log('The image', object.name,'has been detected as OK.')
+  }
+)
+
+async function blurImage(filePath) {
+  const tempLocalFile = path.join(os.tmpdir(), path.basename(filePath))
+  const messageId = filePath.split(path.sep)[1]
+  const bucket = admin.storage().bucket()
+
+  await bucket.file(filePath).download({ destination: tempLocalFile })
+  console.log('Image has been downloaded to', tempLocalFile)
+  await spawn('convert', [tempLocalFile, '-channel', 'RGBA', '-blur', '0x24', tempLocalFile])
+  console.log('Image has been blurred')
+  await bucket.upload(tempLocalFile, { destination: filePath })
+  console.log('Blurred image has been uploaded to', filePath)
+  fs.unlinkSync(tempLocalFile)
+  console.log('Deleted local file.')
+  await admin.firestore().collection('messages').doc(messageId).update({ moderated: true })
+  console.log('Marked the image as moderated in the database.')
+}
 
 // TODO(DEVELOPER): Write the sendNotifications Function here.
